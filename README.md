@@ -21,17 +21,61 @@ cd iikanji-kakeibo-client-mcp
 pip install -e .
 ```
 
-## OAuth トークンの取得
+## トークンの取得
 
-1. いいかんじ家計簿で `/oauth/device` にアクセスしクライアント名を登録、device_code と user_code を取得
-2. ブラウザで user_code を入力 → **「読み取り専用で承認」** を選択
-3. `/oauth/token` をポーリングしてアクセストークン (`ikt_*`) を取得
+### 推奨: OAuth 読み取り専用トークン (Device Flow)
 
-詳細は [いいかんじ家計簿のリリースノート v3.7.x](https://github.com/nananek/iikanji-kakeibo/blob/master/docs/releases.md) を参照。
+ブラウザで「読み取り専用で承認」して取得した OAuth トークン (`ikt_*`) なら、書き込み系エンドポイント (`POST /journals` 等) はサーバー側で 403 拒否されるため、MCP 経由で誤って書き込まれる構造的リスクなし。
+
+#### A. curl で実行
+
+```bash
+SERVER=https://kakeibo.example.com
+
+# 1. device_code / user_code を発行
+curl -sX POST "$SERVER/oauth/device" \
+  -H "Content-Type: application/json" \
+  -d '{"client_name": "Claude MCP"}'
+# → {"device_code":"...","user_code":"XXXX-YYYY",
+#    "verification_uri_complete":"...","interval":5, ...}
+
+# 2. verification_uri_complete をブラウザで開く
+#    → ログインして [読み取り専用で承認] を押す
+
+# 3. アクセストークンを取得 (interval 秒間隔で承認後にリトライ)
+curl -sX POST "$SERVER/oauth/token" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "grant_type":"urn:ietf:params:oauth:grant-type:device_code",
+    "device_code":"<step 1 の device_code>"
+  }'
+# → {"access_token":"ikt_...","token_type":"Bearer","expires_in":31536000}
+```
+
+承認直後は `{"error":"authorization_pending"}` が返るので、5秒待って再試行。
+
+#### B. iikanji-tui で実行
+
+[iikanji-tui](https://github.com/nananek/iikanji-kakeibo-client-tui) をインストール済みなら:
+
+```bash
+iikanji-tui login --api-url "$SERVER"
+```
+
+ブラウザが自動で開きます。承認画面で **「読み取り専用で承認」** を選択。発行されたトークンは TUI の設定ファイル (`~/.config/iikanji-tui/config.toml` 等) に保存されるので、その値を `IIKANJI_API_TOKEN` にコピーしてください。
+
+### 代替: API キー (rw)
+
+設定 → APIキー で発行。MCP には write 系ツールがないので実用上は read 操作のみですが、トークン自体は rw 権限を持つ点に注意。スコープに `reports:read` を含めること。
 
 ## Claude Desktop 設定
 
-`~/.config/Claude/claude_desktop_config.json` (macOS は `~/Library/Application Support/Claude/claude_desktop_config.json`) に追記:
+設定ファイルに追記:
+
+| OS | パス |
+|---|---|
+| macOS | `~/Library/Application Support/Claude/claude_desktop_config.json` |
+| Windows | `%APPDATA%\Claude\claude_desktop_config.json` |
 
 ```json
 {
